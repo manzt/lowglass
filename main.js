@@ -1,23 +1,112 @@
+/// <reference types="npm:@types/d3" />
 import * as d3 from "https://esm.sh/d3@7.8.5";
-import * as lib from "./lib.js";
 
-let N = 100000;
-let [w, h] = [600, 600];
-let data = [
+/** @param {{ width: number, height: number }} options */
+export function create_canvas({ width, height }) {
+  const dpr = globalThis.devicePixelRatio || 1;
+  const canvas = Object.assign(document.createElement("canvas"), {
+    width: width * dpr,
+    height: height * dpr,
+  });
+  canvas.style.width = `${width}px`;
+  canvas.style.height = `${height}px`;
+  return canvas;
+}
+
+/**
+ * @param {import("npm:@types/d3").ScaleLinear<number, number>} xScale
+ * @param {import("npm:@types/d3").ScaleLinear<number, number>} yScale
+ * @param {number} width
+ * @param {number} height
+ */
+export function window_transform(xScale, yScale, width, height) {
+  // A function that creates the two matrices a webgl shader needs, in addition to the zoom state,
+  // to stay aligned with canvas and d3 zoom.
+
+  // width and height are svg parameters; x and y scales project from the data x and y into the
+  // the webgl space.
+
+  // Given two d3 scales in coordinate space, create two matrices that project from the original
+  // space into [-1, 1] webgl space.
+
+  // return the magnitude of a scale.
+  const gap = (/** @type{[number, number]} */ arr) => arr[1] - arr[0];
+  const x_mid = d3.mean(xScale.domain());
+  const y_mid = d3.mean(yScale.domain());
+
+  // @ts-expect-error - range and domain are defined
+  const xmulti = gap(xScale.range()) / gap(xScale.domain());
+  // @ts-expect-error - range and domain are defined
+  const ymulti = gap(yScale.range()) / gap(yScale.domain());
+
+  // translates from data space to scaled space.
+  const m1 = [
+    [xmulti, 0, 0, 0],
+    [0, ymulti, 0, 0],
+    [0, 0, 1, 0],
+    [
+      -xmulti * x_mid + d3.mean(xScale.range()),
+      -ymulti * y_mid + d3.mean(yScale.range()),
+      0,
+      1,
+    ],
+  ];
+
+  // translate from scaled space to webgl space.
+  // The '2' here is because webgl space runs from -1 to 1; the shift at the end is to
+  // shift from [0, 2] to [-1, 1]
+  const m2 = [
+    [2 / width, 0, 0, 0], // First column
+    [0, -2 / height, 0, 0], // Second column
+    [0, 0, 1, 0], // Third column (unchanged for z-axis in 2D transformations)
+    [-1, 1, 0, 1], // Fourth column, with translations adjusted for WebGL space
+  ];
+
+  return [m1.flat(), m2.flat()];
+}
+
+/**
+ * @param {[ArrayLike<number>, ArrayLike<number>]} data
+ * @param {number} w
+ * @param {number} h
+ */
+export function create_scales(data, w, h) {
+  const square_box = d3.min([w, h]);
+  const d = { x: data[0], y: data[1] };
+  const scales = {
+    x: d3.scaleLinear(),
+    y: d3.scaleLinear(),
+  };
+  for (const [name, dim] of /** @type {const} */ ([["x", w], ["y", h]])) {
+    const buffer = (dim - square_box) / 2;
+    scales[name] = scales[name]
+      .domain(d3.extent(d[name]))
+      .range([buffer, dim - buffer]);
+  }
+  return scales;
+}
+
+const N = 100000;
+const [w, h] = [600, 600];
+const data = /** @type {const} */ ([
   Float32Array.from({ length: N }).map((_) => (Math.random() - 0.5) * 2),
   Float32Array.from({ length: N }).map((_) => (Math.random() - 0.5) * 2),
-];
-let scales = lib.create_scales(data, w, h);
+]);
+const scales = create_scales(data, w, h);
 
-let canvas = lib.create_canvas({ width: w, height: h });
-let context = canvas.getContext("webgpu");
-let adapter = await navigator.gpu.requestAdapter();
-let device = await adapter.requestDevice();
-let format = navigator.gpu.getPreferredCanvasFormat();
+const canvas = create_canvas({ width: w, height: h });
+const context = canvas.getContext("webgpu");
+if (!context) {
+  throw new Error("WebGPU is not supported");
+}
+
+const adapter = await navigator.gpu.requestAdapter();
+const device = await adapter.requestDevice();
+const format = navigator.gpu.getPreferredCanvasFormat();
 context.configure({ device, format });
 
-let [x_buffer, y_buffer] = data.map((arr) => {
-  let buffer = device.createBuffer({
+const [x_buffer, y_buffer] = data.map((arr) => {
+  const buffer = device.createBuffer({
     size: arr.byteLength,
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     mappedAtCreation: true,
@@ -27,7 +116,7 @@ let [x_buffer, y_buffer] = data.map((arr) => {
   return buffer;
 });
 
-let xylayout = device.createBindGroupLayout({
+const xylayout = device.createBindGroupLayout({
   entries: [
     {
       binding: 0,
@@ -42,21 +131,21 @@ let xylayout = device.createBindGroupLayout({
   ],
 });
 
-let uniforms = new Float32Array(50);
-let u_zoom = uniforms.subarray(0, 16);
-let u_window_scale = uniforms.subarray(16, 32);
-let u_untransform = uniforms.subarray(32, 48);
-let ubuffer = device.createBuffer({
+const uniforms = new Float32Array(50);
+const u_zoom = uniforms.subarray(0, 16);
+const u_window_scale = uniforms.subarray(16, 32);
+const u_untransform = uniforms.subarray(32, 48);
+const ubuffer = device.createBuffer({
   size: uniforms.byteLength,
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 });
 {
-  let mats = lib.window_transform(scales.x, scales.y, w, h);
+  const mats = window_transform(scales.x, scales.y, w, h);
   u_window_scale.set(mats[0]);
   u_untransform.set(mats[1]);
 }
 
-let ulayout = device.createBindGroupLayout({
+const ulayout = device.createBindGroupLayout({
   entries: [
     {
       binding: 0,
@@ -65,53 +154,53 @@ let ulayout = device.createBindGroupLayout({
     },
   ],
 });
-let code = `
+const code = `
 @group(0) @binding(0) var<storage, read> x_values : array<f32>;
 @group(0) @binding(1) var<storage, read> y_values : array<f32>;
 @group(1) @binding(0) var<uniform> uni: Uniforms;
 struct Uniforms {
-zoom: mat4x4<f32>,
-window_scale: mat4x4<f32>,
-untransform: mat4x4<f32>,
+  zoom: mat4x4<f32>,
+  window_scale: mat4x4<f32>,
+  untransform: mat4x4<f32>,
 };
-struct VertexOutput {
-@builtin(position) pos: vec4<f32>,
-@location(1) quad_position: vec2f,
+  struct VertexOutput {
+  @builtin(position) pos: vec4<f32>,
+  @location(1) quad_position: vec2f,
 };
 
 @vertex
 fn vert(@builtin(instance_index) instance_index: u32, @builtin(vertex_index) vertex_index: u32) -> VertexOutput {
-let x = x_values[instance_index];
-let y = y_values[instance_index];
-let t = uni.untransform * uni.zoom * uni.window_scale;
-let k = uni.zoom[0][0];
-let size = exp(log(k) * 0.5)/ 1000.0;
-let quad_pos = array(
-  vec2f(0, 0),
-  vec2f(1, 0),
-  vec2f(0, 1),
-  vec2f(0, 1),
-  vec2f(1, 0),
-  vec2f(1, 1),
-); 
-let qp = quad_pos[vertex_index] - 0.5;
-let xy = vec4<f32>(x, y, 1.0, 1.0) + vec4f(qp * size, 0.0, 0.0);
-let pos = t * xy;
-return VertexOutput(pos, qp);
+  let x = x_values[instance_index];
+  let y = y_values[instance_index];
+  let t = uni.untransform * uni.zoom * uni.window_scale;
+  let k = uni.zoom[0][0];
+  let size = exp(log(k) * 0.5)/ 1000.0;
+  let quad_pos = array(
+    vec2f(0, 0),
+    vec2f(1, 0),
+    vec2f(0, 1),
+    vec2f(0, 1),
+    vec2f(1, 0),
+    vec2f(1, 1),
+  ); 
+  let qp = quad_pos[vertex_index] - 0.5;
+  let xy = vec4<f32>(x, y, 1.0, 1.0) + vec4f(qp * size, 0.0, 0.0);
+  let pos = t * xy;
+  return VertexOutput(pos, qp);
 }
 
 const center: vec2<f32> = vec2<f32>(0.0, 0.0);
 
 @fragment fn frag(input: VertexOutput) -> @location(0) vec4<f32> {
-if (distance(input.quad_position, center) > 0.5) {
-  discard;
-}
-let opacity = 0.5;
-return vec4<f32>(0.0, 0.0, 0.0, opacity);
+  if (distance(input.quad_position, center) > 0.5) {
+    discard;
+  }
+  let opacity = 0.5;
+  return vec4<f32>(0.0, 0.0, 0.0, opacity);
 }
 `;
-let module = device.createShaderModule({ code });
-let pipeline = device.createRenderPipeline({
+const module = device.createShaderModule({ code });
+const pipeline = device.createRenderPipeline({
   layout: device.createPipelineLayout({
     bindGroupLayouts: [xylayout, ulayout],
   }),
@@ -140,7 +229,7 @@ let pipeline = device.createRenderPipeline({
   primitive: { topology: "triangle-list" },
 });
 
-let xygroup = device.createBindGroup({
+const xygroup = device.createBindGroup({
   layout: xylayout,
   entries: [
     { binding: 0, resource: { buffer: x_buffer } },
@@ -148,14 +237,14 @@ let xygroup = device.createBindGroup({
   ],
 });
 
-let ugroup = device.createBindGroup({
+const ugroup = device.createBindGroup({
   layout: ulayout,
   entries: [{ binding: 0, resource: { buffer: ubuffer } }],
 });
 
 function render() {
-  let encoder = device.createCommandEncoder();
-  let pass = encoder.beginRenderPass({
+  const encoder = device.createCommandEncoder();
+  const pass = encoder.beginRenderPass({
     colorAttachments: [
       {
         clearValue: [1, 1, 1, 1],
@@ -174,7 +263,7 @@ function render() {
 }
 
 function zoomed({ k, x, y }) {
-  let mat = [
+  const mat = [
     [k, 0, 0, 0],
     [0, k, 0, 0],
     [0, 0, 1, 0],
@@ -193,6 +282,5 @@ d3.select(context.canvas).call(
 );
 
 zoomed(d3.zoomIdentity);
-
 
 document.body.appendChild(canvas);
