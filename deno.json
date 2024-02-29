@@ -1,0 +1,17 @@
+{
+	"lock": false,
+	"compilerOptions": {
+		"checkJs": true,
+		"allowJs": true,
+		"lib": [
+			"ES2020",
+			"DOM",
+			"DOM.Iterable"
+		]
+	},
+	"lint": {
+		"rules": {
+			"exclude": ["prefer-const"]
+		}
+	}
+}
