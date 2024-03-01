@@ -17,7 +17,7 @@ fn vert(@builtin(instance_index) instance_index: u32, @builtin(vertex_index) ver
   let y = y_values[instance_index];
   let t = uni.untransform * uni.zoom * uni.window_scale;
   let k = uni.zoom[0][0];
-  let size = exp(log(k) * 0.5)/ 1000.0;
+  let size = 1.0;
   let quad_pos = array(
     vec2f(0, 0),
     vec2f(1, 0),
@@ -35,9 +35,9 @@ fn vert(@builtin(instance_index) instance_index: u32, @builtin(vertex_index) ver
 const center: vec2<f32> = vec2<f32>(0.0, 0.0);
 
 @fragment fn frag(input: VertexOutput) -> @location(0) vec4<f32> {
-  if (distance(input.quad_position, center) > 0.5) {
-    discard;
-  }
-  let opacity = 0.5;
-  return vec4<f32>(0.0, 0.0, 0.0, opacity);
+  //if (distance(input.quad_position, center) > 0.5) {
+  //  discard;
+  //}
+  let opacity = 1.0;
+  return vec4<f32>(input.quad_position.xy, 0.0, opacity);
 }
