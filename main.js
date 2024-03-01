@@ -1,5 +1,6 @@
 /// <reference types="npm:@types/d3" />
 import * as d3 from "https://esm.sh/d3@7.8.5";
+import * as d3Tile from "https://esm.sh/d3-tile";
 
 /** @param {{ width: number, height: number }} options */
 export function create_canvas({ width, height }) {
@@ -77,7 +78,10 @@ export function create_scales(data, w, h) {
     x: d3.scaleLinear(),
     y: d3.scaleLinear(),
   };
-  for (const [name, dim] of /** @type {const} */ ([["x", w], ["y", h]])) {
+  for (const [name, dim] of /** @type {const} */ ([
+    ["x", w],
+    ["y", h],
+  ])) {
     const buffer = (dim - square_box) / 2;
     scales[name] = scales[name]
       .domain(d3.extent(d[name]))
@@ -85,16 +89,21 @@ export function create_scales(data, w, h) {
   }
   return scales;
 }
+const [w, h] = [500, 500];
+const N = 10;
+const dataX = new Float32Array(N * N);
+const dataY = new Float32Array(N * N);
+for (let j = 0; j < N; j++) {
+  for (let i = 0; i < N; i++) {
+    dataX[j * N + i] = i;
+    dataY[j * N + i] = j;
+  }
+}
 
-const N = 100000;
-const [w, h] = [600, 600];
-const data = /** @type {const} */ ([
-  Float32Array.from({ length: N }).map((_) => (Math.random() - 0.5) * 2),
-  Float32Array.from({ length: N }).map((_) => (Math.random() - 0.5) * 2),
-]);
+const data = [dataX, dataY];
 const scales = create_scales(data, w, h);
-
 const canvas = create_canvas({ width: w, height: h });
+console.log({ data, scales });
 const context = canvas.getContext("webgpu");
 if (!context) {
   throw new Error("WebGPU is not supported");
@@ -216,17 +225,26 @@ function render() {
   pass.setPipeline(pipeline);
   pass.setBindGroup(0, xygroup);
   pass.setBindGroup(1, ugroup);
-  pass.draw(6, N);
+  pass.draw(6, N * N);
   pass.end();
   device.queue.submit([encoder.finish()]);
 }
 
+const tiler = d3Tile.tile().extent([
+  [0, 0],
+  [w, h],
+]);
+
 function zoomed({ k, x, y }) {
+  const tile = tiler({ k, x, y });
+  if (k > 4.0) k = 1.0 + (k % 4);
+  console.log(k);
+  // console.log(tile.map((d) => d.join("/")));
   const mat = [
     [k, 0, 0, 0],
     [0, k, 0, 0],
     [0, 0, 1, 0],
-    [x, y, 0, 1],
+    [0, 0, 0, 1],
   ];
   u_zoom.set(mat.flat());
   device.queue.writeBuffer(ubuffer, 0, uniforms);
